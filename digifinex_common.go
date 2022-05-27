@@ -44,11 +44,11 @@ func (client *DigifinexClient) doRequest(method string, path string, params map[
 	// header
 	req.Header.Add("ACCESS-TIMESTAMP", strconv.Itoa(int(time.Now().Unix())))
 	if sign {
-		req.Header.Add("ACCESS-KEY", client.appKey)
-		req.Header.Add("ACCESS-SIGN", hmacSha256([]byte(client.appSecret), []byte(encodedParams)))
+		req.Header.Add("ACCESS-KEY", client.apiKey)
+		req.Header.Add("ACCESS-SIGN", hmacSha256([]byte(client.apiSecret), []byte(encodedParams)))
 		//fmt.Println(req.Header.Get("ACCESS-SIGN"))
 	}
-	fmt.Println(req.Header)
+
 	c := &http.Client{
 		Transport: &http.Transport{},
 		Timeout:   client.deafultTimeout,

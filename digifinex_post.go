@@ -2,17 +2,18 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"strings"
 
-	jsoniter "github.com/json-iterator/go"
+	//jsoniter "github.com/json-iterator/go"
 	"github.com/shopspring/decimal"
 )
 
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
+//var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 func (client *DigifinexClient) PlaceLimitOrder(symbol, product, side, price, qty string) (string, error) {
 

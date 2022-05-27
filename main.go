@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 const (
@@ -9,19 +13,35 @@ const (
 )
 
 const (
-	appKey    = "acc8a49e0fcc4b"
-	appSecret = "5fb78e8084f0536c286471b0f2a5def7f7a556a03c"
+	apiKey    = "acc8a49e0fcc4b"
+	apiSecret = "5fb78e8084f0536c286471b0f2a5def7f7a556a03c"
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	// ws
+	/* o := SpotLocalOrderbook(ctx, "ETH_BTC")
+
+	for i := 0; i < 10; i++ {
+		fmt.Println(o.GetAsks())
+		fmt.Println(o.GetBids())
+		time.Sleep(time.Second)
+	} */
+
+	/* app := DigifinexClient{
+		apiKey:    apiKey,
+		apiSecret: apiSecret,
+	} */
 	app := DigifinexClient{
-		appKey:    appKey,
-		appSecret: appSecret,
+		apiKey:    apiKey,
+		apiSecret: apiSecret,
 	}
+
+	app.TradeReportWebsocket(ctx, []string{"ETH_BTC"})
 
 	//fmt.Println(app.PlaceLimitOrder("btc_usdt", "spot", "buy", "8000", "1"))
 	//fmt.Println(app.GetBalances())
-	fmt.Println(app.GetOpenOrders())
+	//fmt.Println(app.GetOpenOrders())
 
 	/* response, err := app.doRequest("POST", "/spot/order/new", map[string]interface{}{
 		"symbol":    "btc_usdt",
@@ -42,4 +62,10 @@ func main() {
 		panic(fmt.Errorf(string(textRes)))
 	}
 	fmt.Println(string(textRes)) */
+
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	<-c
+	fmt.Println("Ctrl + C pressed!")
+	cancel()
 }

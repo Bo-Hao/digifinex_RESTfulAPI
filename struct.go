@@ -2,13 +2,42 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type DigifinexClient struct {
-	appKey         string
-	appSecret      string
+	apiKey         string
+	apiSecret      string
 	deafultTimeout time.Duration
+
+	ws WSClient
+
+	onErrBranch struct {
+		onErr bool
+		sync.RWMutex
+	}
+
+	openOrderBranch struct {
+		openOrders map[string]openOrder // order id
+		sync.RWMutex
+	}
+
+	TradeReportBranch struct {
+		TradeReports [][]string
+		sync.RWMutex
+	}
+
+	TmpBranch struct {
+		openOrders map[string]openOrder // order id
+		sync.RWMutex
+	}
+}
+
+type WSClient struct {
+	conn *websocket.Conn
 }
 
 func parseToString(val interface{}) string {
