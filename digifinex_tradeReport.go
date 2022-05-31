@@ -42,56 +42,92 @@ type openOrder struct {
 // trade report
 func (client *DigifinexClient) TradeReportWebsocket(ctx context.Context, marketList []string) {
 	var url string = "wss://openapi.digifinex.com/ws/v1/"
-	client.updateOnErr(false)
+	client.updateErr(false)
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	authSubMsg, err := authSubscribeMsg(client.apiKey, client.apiSecret)
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	err = conn.WriteMessage(websocket.TextMessage, authSubMsg)
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 		client.ws.conn.SetReadDeadline(time.Now().Add(time.Second))
 	}
 
 	_, authMsg, err := conn.ReadMessage()
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	authRes, _ := decodingMap(authMsg)
 	if authRes["error"] == nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	tradeSubMsg, err := tradeReportSubscribeMessage(marketList)
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	err = conn.WriteMessage(websocket.TextMessage, tradeSubMsg)
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 		client.ws.conn.SetReadDeadline(time.Now().Add(time.Second))
 	}
 
 	_, tradeMsg, err := conn.ReadMessage()
 	if err != nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
 	tradeRes, _ := decodingMap(tradeMsg)
 	if tradeRes["error"] == nil {
-		client.updateOnErr(true)
+		client.updateErr(true)
 	}
 
+	client.TmpBranch.Lock()
+	openOrders := client.TmpBranch.openOrders
+	client.TmpBranch.openOrders = make(map[string]openOrder)
+	client.TmpBranch.Unlock()
+
+	client.openOrderBranch.Lock()
+	client.openOrderBranch.openOrders = openOrders
+	client.openOrderBranch.Unlock()
+
 	client.ws.conn = conn
+	defer conn.Close()
+
+	// ping pong
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				err := client.sendPingPong()
+				if err != nil {
+					log.Println("ping pong failed")
+				}
+
+				client.pingpongBranch.RLock()
+				lastPong := client.pingpongBranch.lastPingPongTime
+				client.pingpongBranch.RUnlock()
+				if time.Since(lastPong).Seconds() > 180 {
+					client.updateErr(true)
+				}
+
+			}
+			if client.checkErr() {
+				return
+			}
+		}
+	}()
 
 	// mainloop
 mainloop:
@@ -118,25 +154,22 @@ mainloop:
 			}
 		} // end select
 		// if there is something wrong that the WS should be reconnected.
-		if client.checkOnErr() {
+		if client.checkErr() {
 			break mainloop
 		}
 
 		time.Sleep(time.Millisecond)
 	} // end for
 
-	conn.Close()
-	client.ws.conn.Close()
-
 	// if it is manual work.
-	if !client.checkOnErr() {
+	if !client.checkErr() {
 		return
 	}
 
 	client.TmpBranch.Lock()
 
 	client.openOrderBranch.RLock()
-	openOrders := client.openOrderBranch.openOrders
+	openOrders = client.openOrderBranch.openOrders
 	client.openOrderBranch.RUnlock()
 
 	client.TmpBranch.openOrders = openOrders
@@ -183,6 +216,16 @@ func tradeReportSubscribeMessage(marketList []string) ([]byte, error) {
 func (client *DigifinexClient) handleTradeReportMsg(msg []byte) error {
 	msgMap, err := decodingMap(msg)
 	if err != nil {
+		return err
+	}
+
+	if _, ok := msgMap["error"]; ok {
+		if msgMap["result"].(string) == "pong" {
+			client.pingpongBranch.Lock()
+			client.pingpongBranch.lastPingPongTime = time.Now()
+			client.pingpongBranch.Unlock()
+		}
+		return nil
 	}
 
 	if _, ok := msgMap["method"]; ok && msgMap["method"] == "order.update" {
@@ -190,12 +233,12 @@ func (client *DigifinexClient) handleTradeReportMsg(msg []byte) error {
 		var res tradeRes
 		reader, err0 := zlib.NewReader(buffer)
 		if err0 != nil {
-
+			return err0
 		}
 		defer reader.Close()
 		content, err1 := ioutil.ReadAll(reader)
 		if err1 != nil {
-
+			return err1
 		}
 		json.Unmarshal(content, &res)
 
@@ -284,16 +327,33 @@ func (client *DigifinexClient) dumpTradeReport(tradeReport []string) {
 	client.TradeReportBranch.TradeReports = append(client.TradeReportBranch.TradeReports, tradeReport)
 }
 
-func (client *DigifinexClient) updateOnErr(on bool) {
+func (client *DigifinexClient) updateErr(on bool) {
 	client.onErrBranch.Lock()
 	defer client.onErrBranch.Unlock()
 	client.onErrBranch.onErr = on
 }
 
-func (client *DigifinexClient) checkOnErr() bool {
+func (client *DigifinexClient) checkErr() bool {
 	client.onErrBranch.RLock()
 	defer client.onErrBranch.RUnlock()
 	return client.onErrBranch.onErr
+}
+
+func (client *DigifinexClient) sendPingPong() error {
+	ping := make(map[string]interface{})
+	ping["id"] = 0
+	ping["method"] = "server.ping"
+	ping["params"] = []string{}
+
+	message, err := json.Marshal(ping)
+	if err != nil {
+		return err
+	}
+	if err := client.ws.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		client.ws.conn.SetReadDeadline(time.Now().Add(time.Second))
+		return err
+	}
+	return nil
 }
 
 /* func (Mc *MaxClient) parseTradeReportSnapshotMsg(msgMap map[string]interface{}) error {

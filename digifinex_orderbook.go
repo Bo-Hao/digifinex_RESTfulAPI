@@ -30,6 +30,11 @@ type OrderbookBranch struct {
 	ws struct {
 		conn *websocket.Conn
 	}
+
+	pingpongBranch struct {
+		lastPingPongTime time.Time
+		sync.RWMutex
+	}
 }
 
 func SpotLocalOrderbook(ctx context.Context, symbol string) *OrderbookBranch {
@@ -62,6 +67,33 @@ func (o *OrderbookBranch) maintain(ctx context.Context, symbol string) {
 	}
 
 	o.ws.conn = conn
+	defer conn.Close()
+
+	// ping pong
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				err := o.sendPingPong()
+				if err != nil {
+					log.Println("ping pong failed")
+				}
+
+				o.pingpongBranch.RLock()
+				lastPong := o.pingpongBranch.lastPingPongTime
+				o.pingpongBranch.RUnlock()
+				if time.Since(lastPong).Seconds() > 180 {
+					o.updateErr(true)
+				}
+
+			}
+			if o.checkErr() {
+				return
+			}
+		}
+	}()
 
 	// mainloop
 mainloop:
@@ -96,8 +128,6 @@ mainloop:
 		time.Sleep(time.Millisecond)
 	} // end for
 
-	o.ws.conn.Close()
-
 	if !o.checkErr() {
 		return
 	}
@@ -126,12 +156,12 @@ func decodingMap(message []byte) (res map[string]interface{}, err error) {
 	buffer := bytes.NewBuffer(message)
 	reader, err0 := zlib.NewReader(buffer)
 	if err0 != nil {
-
+		return res, err0
 	}
 	defer reader.Close()
 	content, err1 := ioutil.ReadAll(reader)
 	if err1 != nil {
-
+		return res, err1
 	}
 	err = json.Unmarshal(content, &res)
 	if err != nil {
@@ -148,10 +178,15 @@ func (o *OrderbookBranch) handleOrderbookMsg(msg []byte) (err error) {
 	}
 	msgMap, err := decodingMap(msg)
 	if err != nil {
+		log.Println("fail to decode")
 	}
 
-	if v, ok := msgMap["error"]; ok && v == nil {
-		log.Println("subscribe success")
+	if _, ok := msgMap["error"]; ok {
+		if msgMap["result"].(string) == "pong" {
+			o.pingpongBranch.Lock()
+			o.pingpongBranch.lastPingPongTime = time.Now()
+			o.pingpongBranch.Unlock()
+		}
 		return nil
 	}
 
@@ -160,7 +195,6 @@ func (o *OrderbookBranch) handleOrderbookMsg(msg []byte) (err error) {
 		var r res
 		json.Unmarshal(b, &r)
 		snapshot := r.Params[0].(bool)
-		//symbol := r.Params[2].(string)
 
 		n := r.Params[1].(map[string]interface{})
 		askByte, _ := json.Marshal(n["asks"])
@@ -193,6 +227,23 @@ func (o *OrderbookBranch) checkErr() bool {
 	defer o.onErrBranch.RUnlock()
 	on := o.onErrBranch.onErr
 	return on
+}
+
+func (o *OrderbookBranch) sendPingPong() error {
+	ping := make(map[string]interface{})
+	ping["id"] = 0
+	ping["method"] = "server.ping"
+	ping["params"] = []string{}
+
+	message, err := json.Marshal(ping)
+	if err != nil {
+		return err
+	}
+	if err := o.ws.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		o.ws.conn.SetReadDeadline(time.Now().Add(time.Second))
+		return err
+	}
+	return nil
 }
 
 func (o *OrderbookBranch) GetBids() ([][]string, bool) {

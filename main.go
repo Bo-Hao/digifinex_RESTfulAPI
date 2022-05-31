@@ -37,7 +37,7 @@ func main() {
 		apiSecret: apiSecret,
 	}
 
-	app.TradeReportWebsocket(ctx, []string{"ETH_BTC"})
+	go app.TradeReportWebsocket(ctx, []string{"ETH_BTC"})
 
 	//fmt.Println(app.PlaceLimitOrder("btc_usdt", "spot", "buy", "8000", "1"))
 	//fmt.Println(app.GetBalances())

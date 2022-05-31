@@ -34,6 +34,11 @@ type DigifinexClient struct {
 		openOrders map[string]openOrder // order id
 		sync.RWMutex
 	}
+
+	pingpongBranch struct {
+		lastPingPongTime time.Time
+		sync.RWMutex
+	}
 }
 
 type WSClient struct {
